@@ -1,30 +1,83 @@
 import maya.cmds as cmds
-import maya.OpenMayaUI as omui 
-from PySide2 import QtWidgets, QtCore
-from shiboken2 import wrapInstance
 
-def get_maya_main_window():
-    maya_ptr = omui.MQtUtil.mainWindow()
-    return wrapInstance(int(maya_ptr), QtWidgets.QWidget)
+class SmartSheet:
+    def __init__(self):
+        self.window = "SmartSheetWindow"
+        self.precision = 3
+        self.build_ui()
 
-class TestWindow(QtWidgets.QWidget):
-    def __init__(self, parent=get_maya_main_window()):
-        super(TestWindow, self).__init__(parent)
-        self.setWindowTitle("Test Window")
-        self.setWindowFlags(QtCore.Qt.Window) # Floating window flag
-        self.resize(1000, 1000)
-        QtWidgets.QLabel("Success!", self)
+    def build_ui(self):
+        if cmds.window(self.window, exists=True):
+            cmds.deleteUI(self.window)
 
-# Global variable for the test window
-TEST_WIN = None
+        self.window = cmds.window(self.window, title="Python Smart Sheet", widthHeight=(600, 300))
+        cmds.columnLayout(adjustableColumn=True)
 
-def run_test():
-    global TEST_WIN
-    if TEST_WIN:
-        TEST_WIN.close()
-        TEST_WIN.deleteLater()
-    
-    TEST_WIN = TestWindow()
-    TEST_WIN.show()
+        cmds.rowLayout(numberOfColumns=3, adjustableColumn=2)
+        cmds.text(label="Table:")
+        self.precision_field = cmds.intField(value=self.precision, changeCommand=self.update_precision)
+        cmds.button(label="Refresh", command=lambda *_: self.populate_table())
+        cmds.setParent("..")
 
-run_test()
+        cmds.separator(height=10, style="in")
+
+        self.scroll = cmds.scrollLayout(horizontalScrollBarThickness=16, verticalScrollBarThickness=16)
+        self.table = cmds.columnLayout(adjustableColumn=True)
+
+        self.populate_table()
+        cmds.showWindow(self.window)
+
+    def update_precision(self, *args):
+        self.precision = cmds.intField(self.precision_field, query=True, value=True)
+        self.populate_table()
+
+    def populate_table(self):
+        """Populate spreadsheet with selected objects' numeric attributes."""
+        cmds.setParent(self.table)
+        children = cmds.columnLayout(self.table, query=True, childArray=True) or []
+        for c in children:
+            cmds.deleteUI(c)
+
+        sel = cmds.ls(selection=True)
+        if not sel:
+            cmds.text(label="Select one or more objects to view attributes.")
+            return
+
+        for obj in sel:
+            cmds.frameLayout(label=obj, collapsable=True, marginWidth=5)
+            cmds.columnLayout(adjustableColumn=True)
+
+            attrs = cmds.listAttr(obj, keyable=True, scalar=True)
+            if not attrs:
+                cmds.text(label="No keyable numeric attributes found.")
+                cmds.setParent("..")
+                continue
+
+            for attr in attrs:
+                try:
+                    val = cmds.getAttr(f"{obj}.{attr}")
+                    if isinstance(val, (int, float)):
+                        row = cmds.rowLayout(numberOfColumns=3, adjustableColumn=2)
+                        cmds.text(label=attr, width=150, align="right")
+                        field = cmds.floatField(
+                            value=round(val, self.precision),
+                            precision=self.precision,
+                            changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v)
+                        )
+                        cmds.text(label="")
+                        cmds.setParent("..")
+                except Exception:
+                    pass
+
+            cmds.setParent("..")  # end column
+            cmds.setParent("..")  # end frame
+
+    def update_attr(self, obj, attr, val):
+        """Set new attribute value in Maya."""
+        try:
+            cmds.setAttr(f"{obj}.{attr}", val)
+        except Exception as e:
+            cmds.warning(f"Could not set {obj}.{attr}: {e}")
+
+# Run it:
+SmartSheet()
