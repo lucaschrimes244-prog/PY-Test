@@ -1,0 +1,30 @@
+import maya.cmds as cmds
+import maya.OpenMayaUI as omui 
+from PySide2 import QtWidgets, QtCore
+from shiboken2 import wrapInstance
+
+def get_maya_main_window():
+    maya_ptr = omui.MQtUtil.mainWindow()
+    return wrapInstance(int(maya_ptr), QtWidgets.QWidget)
+
+class TestWindow(QtWidgets.QWidget):
+    def __init__(self, parent=get_maya_main_window()):
+        super(TestWindow, self).__init__(parent)
+        self.setWindowTitle("Test Window")
+        self.setWindowFlags(QtCore.Qt.Window) # Floating window flag
+        self.resize(1000, 1000)
+        QtWidgets.QLabel("Success!", self)
+
+# Global variable for the test window
+TEST_WIN = None
+
+def run_test():
+    global TEST_WIN
+    if TEST_WIN:
+        TEST_WIN.close()
+        TEST_WIN.deleteLater()
+    
+    TEST_WIN = TestWindow()
+    TEST_WIN.show()
+
+run_test()
