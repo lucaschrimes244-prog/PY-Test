@@ -32,7 +32,7 @@ class SmartSheet:
         self.populate_table()
 
     def populate_table(self):
-        """Populate spreadsheet with selected objects' numeric and boolean attributes."""
+        """Populate spreadsheet with selected objects' numeric attributes."""
         cmds.setParent(self.table)
         children = cmds.columnLayout(self.table, query=True, childArray=True) or []
         for c in children:
@@ -49,49 +49,26 @@ class SmartSheet:
 
             attrs = cmds.listAttr(obj, keyable=True, scalar=True)
             if not attrs:
-                cmds.text(label="No keyable attributes found.")
+                cmds.text(label="No keyable numeric attributes found.")
                 cmds.setParent("..")
                 continue
 
             for attr in attrs:
-                attr_full = f"{obj}.{attr}"
-
-                # Query attribute type
                 try:
-                    attr_type = cmds.getAttr(attr_full, type=True)
-                except Exception:
-                    continue
-
-                # Handle numeric attributes
-                if attr_type in ("float", "double", "doubleLinear", "doubleAngle", "short", "long"):
-                    try:
-                        val = cmds.getAttr(attr_full)
+                    val = cmds.getAttr(f"{obj}.{attr}")
+                    if isinstance(val, (int, float)):
                         row = cmds.rowLayout(numberOfColumns=3, adjustableColumn=2)
-                        cmds.text(label=attr, width=175, align="right")
-                        cmds.floatField(
+                        cmds.text(label=attr, width=150, align="right")
+                        field = cmds.floatField(
                             value=round(val, self.precision),
                             precision=self.precision,
                             changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v)
                         )
                         cmds.text(label="")
                         cmds.setParent("..")
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
-                # Handle boolean attributes
-                elif attr_type == "bool":
-                    try:
-                        val = cmds.getAttr(attr_full)
-                        row = cmds.rowLayout(numberOfColumns=3, adjustableColumn=2)
-                        cmds.text(label=attr, width=150, align="right")
-                        cmds.checkBox(
-                            value=val,
-                            changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v)
-                        )
-                        cmds.text(label="")
-                        cmds.setParent("..")
-                    except Exception:
-                        pass
             cmds.setParent("..")  # end column
             cmds.setParent("..")  # end frame
 

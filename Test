@@ -1,0 +1,222 @@
+import maya.cmds as cmds
+import maya.utils
+
+class AttributeSpreadsheet:
+    def __init__(self):
+        self.window = "attributeSpreadsheetWindow"
+        self.precision_var = "attrSpreadsheetPrecision"
+        self.filter_var = "attrSpreadsheetFilter"
+
+        # Load persisted settings
+        self.precision = cmds.optionVar(q=self.precision_var) if cmds.optionVar(exists=self.precision_var) else 3
+        self.filter_mode = cmds.optionVar(q=self.filter_var) if cmds.optionVar(exists=self.filter_var) else "All"
+        self.search_term = ""
+        self._search_job = None
+
+        self.build_ui()
+
+    # ---------------------------------------------------------------
+    # UI SETUP
+    # ---------------------------------------------------------------
+    def build_ui(self):
+        if cmds.window(self.window, exists=True):
+            cmds.deleteUI(self.window)
+
+        self.window = cmds.window(self.window, title="Python Attribute Spreadsheet", widthHeight=(850, 600))
+        cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+
+        # Toolbar row
+        cmds.rowLayout(numberOfColumns=7, adjustableColumn=3, columnAlign=(1, 'right'), height=28)
+        cmds.text(label="Precision:")
+        self.precision_field = cmds.intField(value=self.precision, changeCommand=self.update_precision, width=50)
+
+        cmds.text(label="Filter:")
+        self.filter_menu = cmds.optionMenu(changeCommand=self.update_filter, width=120)
+        for f in ["All", "Transform", "Visibility", "Shading"]:
+            cmds.menuItem(label=f)
+        cmds.optionMenu(self.filter_menu, e=True, value=self.filter_mode)
+
+        # --- Search bar (debounced live search) ---
+        cmds.text(label="Search:")
+        self.search_field = cmds.textField(
+            text=self.search_term,
+            width=180,
+            textChangedCommand=lambda *_: self.schedule_search_update()
+        )
+        cmds.button(label="Refresh", command=lambda *_: self.populate_table(), width=80)
+        cmds.setParent("..")
+
+        cmds.separator(height=10, style="in")
+
+        # Scroll area
+        self.scroll = cmds.scrollLayout(horizontalScrollBarThickness=14, verticalScrollBarThickness=14)
+        self.table = cmds.columnLayout(adjustableColumn=True, rowSpacing=2)
+
+        self.populate_table()
+        cmds.showWindow(self.window)
+
+    # ---------------------------------------------------------------
+    # SETTINGS
+    # ---------------------------------------------------------------
+    def update_precision(self, *args):
+        self.precision = cmds.intField(self.precision_field, query=True, value=True)
+        cmds.optionVar(iv=(self.precision_var, self.precision))
+        self.populate_table()
+
+    def update_filter(self, filter_val, *args):
+        self.filter_mode = filter_val
+        cmds.optionVar(sv=(self.filter_var, self.filter_mode))
+        self.populate_table()
+
+    def apply_search(self):
+        """Triggered manually (not used in live search)."""
+        self.search_term = cmds.textField(self.search_field, query=True, text=True)
+        self.populate_table()
+
+    # ---------------------------------------------------------------
+    # LIVE SEARCH
+    # ---------------------------------------------------------------
+    def schedule_search_update(self):
+        """Wait briefly before applying search to prevent lag while typing."""
+        self.search_term = cmds.textField(self.search_field, query=True, text=True)
+
+        # Cancel previous scheduled job
+        if self._search_job:
+            try:
+                maya.utils.executeDeferred(lambda: None)
+            except Exception:
+                pass
+            self._search_job = None
+
+        # Schedule delayed refresh (0.25s debounce)
+        def delayed_update():
+            if cmds.textField(self.search_field, exists=True):
+                current_text = cmds.textField(self.search_field, query=True, text=True)
+                if current_text == self.search_term:  # only update if text hasn't changed
+                    self.populate_table()
+
+        self._search_job = maya.utils.executeDeferred(delayed_update)
+
+    # ---------------------------------------------------------------
+    # POPULATE TABLE
+    # ---------------------------------------------------------------
+    def populate_table(self):
+        cmds.setParent(self.table)
+        children = cmds.columnLayout(self.table, query=True, childArray=True) or []
+        for c in children:
+            cmds.deleteUI(c)
+
+        sel = cmds.ls(selection=True)
+        if not sel:
+            cmds.text(label="Select one or more objects to view attributes.", align="center", height=40)
+            return
+
+        # Collect and filter attributes
+        all_attrs = []
+        for obj in sel:
+            attrs = cmds.listAttr(obj, keyable=True, scalar=True) or []
+            if self.filter_mode == "Transform":
+                attrs = [a for a in attrs if a.startswith(("translate", "rotate", "scale"))]
+            elif self.filter_mode == "Visibility":
+                attrs = [a for a in attrs if "vis" in a.lower()]
+            elif self.filter_mode == "Shading":
+                attrs = [a for a in attrs if "color" in a.lower() or "material" in a.lower()]
+            all_attrs.extend(attrs)
+        unique_attrs = sorted(list(set(all_attrs)))
+
+        # Apply search filter
+        if self.search_term:
+            unique_attrs = [a for a in unique_attrs if self.search_term.lower() in a.lower()]
+
+        if not unique_attrs:
+            cmds.text(label="No attributes found matching your search.", align="center", height=30)
+            return
+
+        # Header
+        header_color = (0.28, 0.28, 0.28)
+        cmds.rowLayout(numberOfColumns=len(sel) + 1, adjustableColumn=1, height=28)
+        cmds.text(label="Attribute", width=120, align="right", height=24, bgc=header_color, font="boldLabelFont")
+        for obj in sel:
+            cmds.text(label=obj, width=120, align="center", height=24, bgc=header_color, font="boldLabelFont")
+        cmds.setParent("..")
+        cmds.separator(height=5, style="none")
+
+        # Rows
+        for i, attr in enumerate(unique_attrs):
+            bg_color = (0.19, 0.19, 0.19) if i % 2 == 0 else (0.23, 0.23, 0.23)
+            row = cmds.rowLayout(numberOfColumns=len(sel) + 1, adjustableColumn=1)
+            cmds.text(label=attr, width=120, align="right", bgc=bg_color)
+
+            for obj in sel:
+                full_attr = f"{obj}.{attr}"
+                try:
+                    attr_type = cmds.getAttr(full_attr, type=True)
+                    val = cmds.getAttr(full_attr)
+                except Exception:
+                    cmds.text(label="-", width=120, align="center", bgc=bg_color)
+                    continue
+
+                # Numeric (draggable)
+                if attr_type in ("float", "double", "doubleLinear", "doubleAngle", "short", "long"):
+                    field = cmds.floatField(
+                        value=round(val, self.precision),
+                        precision=self.precision,
+                        width=110,
+                        bgc=bg_color,
+                        dragCommand=lambda clickPos, o=obj, a=attr: self.drag_update(o, a, clickPos),
+                        changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v)
+                    )
+        
+                # Boolean
+                elif attr_type == "bool":
+                    cmds.checkBox(
+                        value=val,
+                        label="",
+                        changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v),
+                        width=110,
+                        bgc=bg_color
+                    )
+
+                # Enum
+                elif attr_type == "enum":
+                    enums = cmds.attributeQuery(attr, node=obj, listEnum=True)
+                    if enums:
+                        items = enums[0].split(":")
+                        val_index = cmds.getAttr(full_attr)
+                        opt = cmds.optionMenu(
+                            width=110,
+                            changeCommand=lambda v, o=obj, a=attr, i=items: self.update_attr(o, a, i.index(v))
+                        )
+                        for item in items:
+                            cmds.menuItem(label=item)
+                        cmds.optionMenu(opt, e=True, value=items[val_index])
+
+                # String
+                elif attr_type == "string":
+                    cmds.textField(
+                        text=val,
+                        width=110,
+                        changeCommand=lambda v, o=obj, a=attr: self.update_attr(o, a, v),
+                        bgc=bg_color
+                    )
+
+                else:
+                    cmds.text(label=str(val)[:10], width=110, align="center", bgc=bg_color)
+
+            cmds.setParent("..")
+
+        cmds.separator(height=6, style="none")
+
+    # ---------------------------------------------------------------
+    # UPDATE ATTRIBUTE
+    # ---------------------------------------------------------------
+    def update_attr(self, obj, attr, val):
+        """Set new attribute value in Maya."""
+        try:
+            cmds.setAttr(f"{obj}.{attr}", val)
+        except Exception as e:
+            cmds.warning(f"Could not set {obj}.{attr}: {e}")
+
+
+# Run it
+AttributeSpreadsheet()
