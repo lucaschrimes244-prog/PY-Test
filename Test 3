@@ -1,0 +1,101 @@
+import maya.cmds as cmds, maya.utils
+
+class SmartSheet:
+    def __init__(self):
+        self.win, self.prec_var, self.filt_var = "smartSheetWin", "smartSheetPrecision", "smartSheetFilter"
+        self.prec = cmds.optionVar(q=self.prec_var) if cmds.optionVar(exists=self.prec_var) else 3
+        self.filt = cmds.optionVar(q=self.filt_var) if cmds.optionVar(exists=self.filt_var) else "All"
+        self.search, self._drag = "", {}
+        self.build()
+
+    # ---------- UI ----------
+    def build(self):
+        if cmds.window(self.win, ex=True): cmds.deleteUI(self.win)
+        cmds.window(self.win, t="Smart Sheet", wh=(850, 600))
+        cmds.columnLayout(adj=True, rs=6)
+        cmds.rowLayout(nc=7, adj=3, h=28)
+        cmds.text("Precision:"); self.pf = cmds.intField(v=self.prec, cc=lambda *_: self.update())
+        cmds.text("Filter:"); self.fm = cmds.optionMenu(cc=lambda v,*_: self.update(v))
+        [cmds.menuItem(l=f) for f in ["All","Transform","Visibility","Shading"]]
+        cmds.optionMenu(self.fm, e=True, v=self.filt)
+        cmds.text("Search:"); self.sf = cmds.textField(tx=self.search, w=180, tcc=lambda *_: self.debounce())
+        cmds.button(l="Refresh", c=lambda *_: self.populate(), w=80)
+        cmds.setParent(".."); cmds.separator(h=8, st="in")
+        self.scroll = cmds.scrollLayout(hst=14, vst=14)
+        self.table = cmds.columnLayout(adj=True, rs=2)
+        self.populate(); cmds.showWindow(self.win)
+
+    # ---------- Update + Debounce ----------
+    def update(self, v=None):
+        if v: self.filt=v; cmds.optionVar(sv=(self.filt_var,v))
+        self.prec = cmds.intField(self.pf,q=True,v=True)
+        cmds.optionVar(iv=(self.prec_var,self.prec)); self.populate()
+
+    def debounce(self):
+        self.search = cmds.textField(self.sf, q=True, tx=True)
+        maya.utils.executeDeferred(lambda: self.populate())
+
+    # ---------- Populate ----------
+    def populate(self):
+        cmds.setParent(self.table)
+        for c in cmds.columnLayout(self.table,q=True,ca=True) or []: cmds.deleteUI(c)
+        sel = cmds.ls(sl=True)
+        if not sel: return cmds.text(l="Select one or more objects.", al="center", h=40)
+
+        attrs = []
+        for o in sel:
+            a = cmds.listAttr(o,k=True,s=True) or []
+            if self.filt=="Transform": a=[x for x in a if x.startswith(("t","r","s"))]
+            elif self.filt=="Visibility": a=[x for x in a if "vis" in x.lower()]
+            elif self.filt=="Shading": a=[x for x in a if any(k in x.lower() for k in("color","material"))]
+            attrs += a
+        attrs = sorted(set(a for a in attrs if not self.search or self.search.lower() in a.lower()))
+        if not attrs: return cmds.text(l="No attributes found.", al="center", h=30)
+
+        hc=(.28,.28,.28)
+        cmds.rowLayout(nc=len(sel)+1,adj=1,h=28)
+        cmds.text(l="Attribute",w=120,al="right",bgc=hc,fn="boldLabelFont")
+        [cmds.text(l=o,w=120,al="center",bgc=hc,fn="boldLabelFont") for o in sel]
+        cmds.setParent(".."); cmds.separator(h=4,st="none")
+
+        for i,a in enumerate(attrs):
+            bg=(.19,.19,.19) if i%2==0 else (.23,.23,.23)
+            cmds.rowLayout(nc=len(sel)+1,adj=1)
+            cmds.text(l=a,w=120,al="right",bgc=bg)
+            for o in sel:
+                fa=f"{o}.{a}"
+                try: t,v=cmds.getAttr(fa,type=True),cmds.getAttr(fa)
+                except: cmds.text(l="-",w=120,al="center",bgc=bg); continue
+                self.draw_field(t,v,o,a,bg)
+            cmds.setParent("..")
+        cmds.separator(h=6,st="none")
+
+    # ---------- Draw Field ----------
+    def draw_field(self,t,v,o,a,bg):
+        if t in ("float","double","doubleLinear","doubleAngle","short","long"):
+            f=cmds.floatField(v=round(v,self.prec),pre=self.prec,w=110,bgc=bg,
+                              cc=lambda val,oo=o,aa=a:self.set_attr(oo,aa,val))
+            cmds.floatField(f,e=True,dragCommand=lambda p,oo=o,aa=a:self.drag(oo,aa,p))
+        elif t=="bool":
+            cmds.checkBox(v=v,l="",cc=lambda val,oo=o,aa=a:self.set_attr(oo,aa,val),w=110,bgc=bg)
+        elif t=="enum":
+            it=(cmds.attributeQuery(a,node=o,listEnum=True)or[""])[0].split(":")
+            om=cmds.optionMenu(w=110,cc=lambda val,oo=o,aa=a,i=it:self.set_attr(oo,aa,i.index(val)))
+            [cmds.menuItem(l=i) for i in it]; cmds.optionMenu(om,e=True,v=it[int(v)])
+        elif t=="string":
+            cmds.textField(tx=v,w=110,cc=lambda val,oo=o,aa=a:self.set_attr(oo,aa,val),bgc=bg)
+        else:
+            cmds.text(l=str(v)[:10],w=110,al="center",bgc=bg)
+
+    # ---------- Interaction ----------
+    def drag(self,o,a,pos):
+        try:
+            fa=f"{o}.{a}"; new=cmds.getAttr(fa)+pos[0]*.01
+            cmds.setAttr(fa,new)
+        except: pass
+
+    def set_attr(self,o,a,v):
+        try: cmds.setAttr(f"{o}.{a}",v)
+        except: cmds.warning(f"Could not set {o}.{a}")
+
+SmartSheet()

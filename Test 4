@@ -1,0 +1,160 @@
+import maya.cmds as cmds, maya.utils
+
+class SmartSheet:
+    def __init__(self):
+        self.win = "smartSheetWin"
+        self.prec_var, self.filt_var = "smartSheetPrecision", "smartSheetFilter"
+        self.prec = cmds.optionVar(q=self.prec_var) if cmds.optionVar(exists=self.prec_var) else 3
+        self.filt = cmds.optionVar(q=self.filt_var) if cmds.optionVar(exists=self.filt_var) else "All"
+        self.search = ""
+        self._search_job = None
+        self.build()
+
+    # ---------------- UI ----------------
+    def build(self):
+        if cmds.window(self.win, ex=True):
+            cmds.deleteUI(self.win)
+        self.win = cmds.window(self.win, t="Smart Sheet", wh=(1100, 600), sizeable=True)
+        cmds.columnLayout(adj=True, rs=6)
+
+        # Toolbar
+        cmds.rowLayout(nc=8, adjustableColumn=3, h=28, cw3=(60, 50, 200))
+        cmds.text(l="Precision:")
+        self.pf = cmds.intField(v=self.prec, cc=lambda *_: self.update(), w=50)
+        cmds.text(l="Filter:")
+        self.fm = cmds.optionMenu(cc=lambda v, *_: self.update(v), w=120)
+        for f in ["All", "Transform", "Visibility", "Shading"]:
+            cmds.menuItem(l=f)
+        cmds.optionMenu(self.fm, e=True, v=self.filt)
+        cmds.text(l="Search:")
+        self.sf = cmds.textField(tx=self.search, w=220, tcc=lambda *_: self.debounce())
+        cmds.button(l="Refresh", c=lambda *_: self.populate(), w=80)
+        cmds.setParent("..")
+        cmds.separator(h=8, st="in")
+
+        self.scroll = cmds.scrollLayout(hst=14, vst=14)
+        self.table = cmds.columnLayout(adj=True, rs=2)
+        self.populate()
+        cmds.showWindow(self.win)
+
+    # ---------------- SETTINGS ----------------
+    def update(self, v=None):
+        if v:
+            self.filt = v
+            cmds.optionVar(sv=(self.filt_var, v))
+        try:
+            self.prec = int(cmds.intField(self.pf, q=True, v=True))
+        except:
+            self.prec = 3
+        cmds.optionVar(iv=(self.prec_var, self.prec))
+        self.populate()
+
+    def debounce(self):
+        self.search = cmds.textField(self.sf, q=True, tx=True)
+        if self._search_job:
+            self._search_job = None
+        def do():
+            if cmds.textField(self.sf, ex=True) and cmds.textField(self.sf, q=True, tx=True) == self.search:
+                self.populate()
+        self._search_job = maya.utils.executeDeferred(do)
+
+    # ---------------- POPULATE ----------------
+    def populate(self):
+        cmds.setParent(self.table)
+        for c in cmds.columnLayout(self.table, q=True, ca=True) or []:
+            try:
+                cmds.deleteUI(c)
+            except:
+                pass
+
+        sel = cmds.ls(sl=True) or []
+        if not sel:
+            return cmds.text(l="Select one or more objects.", al="center", h=40)
+
+        attrs = []
+        for o in sel:
+            a = cmds.listAttr(o, k=True, s=True) or []
+            if self.filt == "Transform":
+                a = [x for x in a if x.startswith(("translate", "rotate", "scale", "t", "r", "s"))]
+            elif self.filt == "Visibility":
+                a = [x for x in a if "vis" in x.lower()]
+            elif self.filt == "Shading":
+                a = [x for x in a if any(k in x.lower() for k in ("color", "material"))]
+            attrs += a
+
+        attrs = sorted(set(a for a in attrs if not self.search or self.search.lower() in a.lower()))
+        if not attrs:
+            return cmds.text(l="No attributes found.", al="center", h=30)
+
+        # Header
+        hc = (.28, .28, .28)
+        num_cols = len(sel) + 1
+        cmds.rowLayout(nc=num_cols, adjustableColumn=num_cols, h=28)
+        cmds.text(l="Attribute", w=120, al="right", bgc=hc, fn="boldLabelFont")
+        for o in sel:
+            cmds.text(l=o, w=120, al="center", bgc=hc, fn="boldLabelFont")
+        cmds.setParent("..")
+        cmds.separator(h=5, st="none")
+
+        # Rows
+        for i, a in enumerate(attrs):
+            bg = (.19, .19, .19) if i % 2 == 0 else (.23, .23, .23)
+            cmds.rowLayout(nc=num_cols, adjustableColumn=num_cols)
+            cmds.text(l=a, w=120, al="right", bgc=bg)
+            for o in sel:
+                fa = f"{o}.{a}"
+                try:
+                    t = cmds.getAttr(fa, type=True)
+                    v = cmds.getAttr(fa)
+                except:
+                    cmds.text(l="-", w=120, al="center", bgc=bg)
+                    continue
+                self.draw_field(t, v, o, a, bg)
+            cmds.setParent("..")
+        cmds.separator(h=6, st="none")
+
+    # ---------------- FIELD DRAW ----------------
+    def draw_field(self, t, v, o, a, bg):
+        if t in ("float", "double", "doubleLinear", "doubleAngle", "short", "long"):
+            col = cmds.rowLayout(nc=2, columnWidth2=(80, 40))
+            f = cmds.floatField(v=round(v, self.prec), pre=self.prec, w=80, bgc=bg,
+                                cc=lambda val, oo=o, aa=a: self.set_attr(oo, aa, val))
+            s = cmds.floatSlider(min=-1, max=1, v=0, step=0.01, w=40, bgc=bg,
+                                 dc=lambda val, oo=o, aa=a, ff=f: self.drag_attr(oo, aa, ff, val))
+            cmds.setParent("..")
+        elif t == "bool":
+            cmds.checkBox(v=v, l="", cc=lambda val, oo=o, aa=a: self.set_attr(oo, aa, val), w=100, bgc=bg)
+        elif t == "enum":
+            enums = cmds.attributeQuery(a, node=o, listEnum=True) or []
+            if enums:
+                items = enums[0].split(":")
+                idx = int(cmds.getAttr(f"{o}.{a}"))
+                opt = cmds.optionMenu(w=100, cc=lambda val, oo=o, aa=a, it=items: self.set_attr(oo, aa, it.index(val)))
+                for it in items:
+                    cmds.menuItem(l=it)
+                cmds.optionMenu(opt, e=True, v=items[idx])
+        elif t == "string":
+            cmds.textField(tx=v, w=100, bgc=bg, cc=lambda val, oo=o, aa=a: self.set_attr(oo, aa, val))
+        else:
+            cmds.text(l=str(v)[:10], w=100, al="center", bgc=bg)
+
+    # ---------------- INTERACTION ----------------
+    def drag_attr(self, o, a, field, val):
+        """Slider updates field and attribute simultaneously"""
+        try:
+            fa = f"{o}.{a}"
+            base = cmds.getAttr(fa)
+            new_val = base + val * 10  # drag sensitivity
+            cmds.floatField(field, e=True, v=round(new_val, self.prec))
+            cmds.setAttr(fa, new_val)
+        except Exception:
+            pass
+
+    def set_attr(self, o, a, v):
+        try:
+            cmds.setAttr(f"{o}.{a}", v)
+        except Exception as e:
+            cmds.warning(f"Could not set {o}.{a}: {e}")
+
+# Run
+SmartSheet()
