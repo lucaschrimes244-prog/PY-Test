@@ -22,9 +22,9 @@ class SmartSheet:
 
     def build(self):
         if cmds.window(self.win, ex=True): cmds.deleteUI(self.win)
-        self.win = cmds.window(self.win, t="Smart Sheet", wh=(950,800), sizeable=True)
-        cmds.columnLayout(adj=True, rs=3)
-        cmds.rowLayout(nc=9, adjustableColumn=3, h=24)
+        self.win = cmds.window(self.win, t="Smart Sheet", wh=(950,600), sizeable=True)
+        cmds.columnLayout(adj=True, rs=6)
+        cmds.rowLayout(nc=9, adjustableColumn=3, h=28)
         cmds.text(l="Precision:"); self.pf=cmds.intField(v=self.prec, cc=lambda *_: self.update(), w=45)
         cmds.text(l="Filter:"); self.fm=cmds.optionMenu(cc=lambda v,*_:self.update(v), w=120)
         for f in ["All","Transform","Visibility","Shading"]: cmds.menuItem(l=f)
@@ -33,13 +33,13 @@ class SmartSheet:
         cmds.button(l="Refresh",c=lambda *_:self.populate(),w=80)
         self.step_btn = cmds.button(l=self.step_label(), bgc=self.step_color(), c=lambda *_:self.toggle_step(), w=140)
         cmds.setParent("..")
-        cmds.separator(h=4,st="in")
-        self.scroll = cmds.scrollLayout(hst=14,vst=14)
+        cmds.separator(h=8,st="in")
+        self.scroll = cmds.scrollLayout(hst=14,vst=14, cr=True)
         self.table = cmds.columnLayout(adj=True, rs=2)
         self.populate()
         cmds.showWindow(self.win)
         if self._sel_job: cmds.scriptJob(kill=self._sel_job, f=True)
-        self._sel_job = cmds.scriptJob(event=["SelectionChanged", lambda: self.populate], parent=self.win)
+        self._sel_job = cmds.scriptJob(event=["SelectionChanged", self.populate], parent=self.win)
 
     def step_label(self): return f"Fine Adjust: {'ON (0.1)' if self.fine_mode else 'OFF (1.0)'}"
     def step_color(self): return self.theme["accent"] if self.fine_mode else self.theme["odd"]
@@ -143,3 +143,4 @@ SmartSheet()
 
 #Colors/theme
 #self.theme → Stores colors for headers, rows, and accent buttons.
+cmds.columnLayout(self.table,e=True)
