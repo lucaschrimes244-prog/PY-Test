@@ -1,0 +1,29 @@
+#columnLayout
+#Stacks children vertically.
+#Expands vertically, but not horizontally by default.
+#When inside a scrollLayout, it remembers its smallest width — can cause “squished” tables.
+
+#rowLayout
+#Places children horizontally.
+#You must manually specify widths or use adjustableColumn.
+#If widths are not set, controls overlap or compress.
+
+#formLayout
+#The most flexible layout — lets you “attach” children to each edge or to other controls.
+#Always fills parent, automatically resizes.
+#Slightly more verbose, but rock-solid for dynamic UIs.
+
+#frameLayout
+#Collapsible frame with title bar.
+#Resizes contents based on collapse state.
+#Nested frameLayouts can mess up spacing.
+
+#scrollLayout
+#Adds scrollbars around a single child layout.
+#Does not resize child automatically unless childResizable=True.
+#If created empty, may “lock in” a tiny child width.
+
+#tabLayout
+#Tabs between child layouts.
+#Each child layout behaves independently.
+#Each tab can have independent width problems.

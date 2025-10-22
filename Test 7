@@ -22,7 +22,7 @@ class SmartSheet:
 
     def build(self):
         if cmds.window(self.win, ex=True): cmds.deleteUI(self.win)
-        self.win = cmds.window(self.win, t="Smart Sheet", wh=(950,600), sizeable=True)
+        self.win = cmds.window(self.win, t="Smart Sheet", wh=(950,800), sizeable=True)
         cmds.columnLayout(adj=True, rs=6)
         cmds.rowLayout(nc=9, adjustableColumn=3, h=28)
         cmds.text(l="Precision:"); self.pf=cmds.intField(v=self.prec, cc=lambda *_: self.update(), w=45)

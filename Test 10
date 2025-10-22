@@ -1,0 +1,275 @@
+import maya.cmds as cmds
+import maya.utils
+
+class SmartSheet:
+    def __init__(self):
+        self.win = "smartSheetWin"
+        self.prec_var = "smartSheetPrecision"
+        self.filt_var = "smartSheetFilter"
+        self.fine_var = "smartSheetFineAdjust"
+        self.col_width_var = "smartSheetColWidths"
+        self.search_field = None
+        self.search = ""
+        self._search_stamp = 0
+
+        # load saved settings
+        self.prec = cmds.optionVar(query=self.prec_var) if cmds.optionVar(exists=self.prec_var) else 3
+        self.filt = cmds.optionVar(query=self.filt_var) if cmds.optionVar(exists=self.filt_var) else "All"
+        self.fine_mode = bool(cmds.optionVar(query=self.fine_var) if cmds.optionVar(exists=self.fine_var) else 0)
+        self.step = 0.1 if self.fine_mode else 1.0
+
+        raw = cmds.optionVar(query=self.col_width_var) if cmds.optionVar(exists=self.col_width_var) else None
+        try:
+            self.col_widths = eval(raw) if raw else {}
+            if not isinstance(self.col_widths, dict):
+                self.col_widths = {}
+        except Exception:
+            self.col_widths = {}
+
+        self.sort_col = None
+        self.sort_asc = True
+        self._sel_job = None
+
+        self.theme = {"header": (0.25, 0.25, 0.25),"even": (0.18, 0.18, 0.18),"odd": (0.21, 0.21, 0.21),"accent": (0.3, 0.6, 0.9)}
+
+        self.build()
+
+    def build(self):
+        if cmds.window(self.win, exists=True):
+            cmds.deleteUI(self.win)
+
+        self.win = cmds.window(self.win, title="Smart Sheet", widthHeight=(950, 800), sizeable=True)
+        form = cmds.formLayout(parent=self.win)
+
+        # ---- toolbar ----
+        toolbar = cmds.rowLayout(numberOfColumns=9, adjustableColumn=3, height=28)
+        cmds.text(label="Precision:")
+        self.pf = cmds.intField(value=self.prec, changeCommand=lambda *_: self.update(), width=45)
+        cmds.text(label="Filter:")
+        self.fm = cmds.optionMenu(changeCommand=lambda v, *_: self.update(v), width=120)
+        for f in ["All", "Transform", "Visibility", "Shading"]:
+            cmds.menuItem(label=f)
+        cmds.optionMenu(self.fm, edit=True, value=self.filt)
+        cmds.text(label="Search:")
+        self.search_field = cmds.textField(
+            text=self.search,
+            width=180,
+            keyPressCommand=lambda *_: self._on_search_keypress()
+        )
+
+        cmds.button(label="Refresh", command=lambda *_: self.populate(), width=80)
+        self.step_btn = cmds.button(label=self._step_label(), backgroundColor=self._step_color(),
+                                   command=lambda *_: self.toggle_step(), width=140)
+        cmds.setParent(form)
+
+        # ---- scroll + table ----
+        self.scroll = cmds.scrollLayout(horizontalScrollBarThickness=14, verticalScrollBarThickness=14, childResizable=True, parent=form)
+        self.table = cmds.columnLayout(adjustableColumn=True, rowSpacing=2, parent=self.scroll)
+
+        # ---- attach layouts ----
+        cmds.formLayout(form, edit=True,
+            attachForm=[(toolbar, 'top', 5), (toolbar, 'left', 5), (toolbar, 'right', 5),
+                        (self.scroll, 'left', 5), (self.scroll, 'right', 5), (self.scroll, 'bottom', 5)],
+            attachControl=[(self.scroll, 'top', 5, toolbar)]
+        )
+
+        cmds.showWindow(self.win)
+        self._add_sel_job()
+        maya.utils.executeDeferred(self.populate)
+
+    def _add_sel_job(self):
+        if self._sel_job:
+            try:
+                cmds.scriptJob(kill=self._sel_job, force=True)
+            except Exception:
+                pass
+        self._sel_job = cmds.scriptJob(event=["SelectionChanged", lambda: maya.utils.executeDeferred(self.populate)], parent=self.win)
+
+    # ---------------- logic ----------------
+    def _step_label(self):
+        return "Fine Adjust: ON (0.1)" if self.fine_mode else "Fine Adjust: OFF (1.0)"
+
+    def _step_color(self):
+        return self.theme["accent"] if self.fine_mode else self.theme["odd"]
+
+    def toggle_step(self):
+        self.fine_mode = not self.fine_mode
+        cmds.optionVar(intValue=(self.fine_var, int(self.fine_mode)))
+        self.step = 0.1 if self.fine_mode else 1.0
+        cmds.button(self.step_btn, edit=True, label=self._step_label(), backgroundColor=self._step_color())
+
+    def _on_search_keypress(self):
+        """
+    
+        Called on every key press in the search field.
+        Updates self.search and schedules a deferred refresh.
+        """
+        try:
+            self.search = cmds.textField(self.search_field, query=True, text=True)
+        except Exception:
+            pass
+
+        # Increment stamp to ignore stale deferred calls
+        self._search_stamp += 1
+        stamp = self._search_stamp
+
+        # Schedule deferred check
+        maya.utils.executeDeferred(lambda: self._debounce_apply(stamp))
+
+    def _debounce_apply(self, stamp):
+        """
+        Runs deferred: only calls populate() if this job is still current.
+        """
+        if stamp != getattr(self, "_search_stamp", 0):
+            # A newer keypress happened; skip
+            return
+        try:
+            current_text = cmds.textField(self.search_field, query=True, text=True)
+            self.search = current_text
+        except Exception:
+            pass
+
+        # Rebuild table filtered by self.search
+        self.populate()
+    
+    def update(self, v=None):
+        if v:
+            self.filt = v
+            cmds.optionVar(stringValue=(self.filt_var, v))
+        self.prec = cmds.intField(self.pf, query=True, value=True)
+        cmds.optionVar(intValue=(self.prec_var, self.prec))
+        self.populate()
+
+    def populate(self, *_):
+        # clear table
+        for child in cmds.columnLayout(self.table, query=True, childArray=True) or []:
+            cmds.deleteUI(child)
+
+        selected_objects = cmds.ls(selection=True) or []
+        if not selected_objects:
+            cmds.text(label="Select an object to view attributes.", align="center", parent=self.table)
+            return
+
+        # attributes
+        attributes = []
+        for obj in selected_objects:
+            try:
+                attr_list = cmds.listAttr(obj, keyable=True, scalar=True) or []
+            except Exception:
+                attr_list = []
+            if self.filt == "Transform":
+                attr_list = [x for x in attr_list if x.startswith(("translate", "rotate", "scale", "t", "r", "s"))]
+            elif self.filt == "Visibility":
+                attr_list = [x for x in attr_list if "vis" in x.lower()]
+            elif self.filt == "Shading":
+                attr_list = [x for x in attr_list if any(k in x.lower() for k in ("color", "material"))]
+            attributes += attr_list
+
+        attributes = sorted(set(attr for attr in attributes if not self.search or self.search.lower() in attr.lower()))
+        if not attributes:
+            cmds.text(label="No attributes found.", align="center", parent=self.table)
+            return
+
+        num_cols = len(selected_objects) + 1
+        cmds.rowLayout(numberOfColumns=num_cols, parent=self.table, height=28)
+        cmds.button(label="Attribute", width=self.col_widths.get("Attribute", 140),
+                    backgroundColor=self.theme["header"],
+                    command=lambda *_: self.toggle_sort("Attribute"))
+        for o in selected_objects:
+            cmds.button(label=o, width=self.col_widths.get(o, 140),
+                        backgroundColor=self.theme["header"],
+                        command=lambda oo=o: self.toggle_sort(oo))
+        cmds.setParent("..")
+
+        for i, a in enumerate(attributes):
+            bg = self.theme["even"] if i % 2 == 0 else self.theme["odd"]
+            cmds.rowLayout(numberOfColumns=num_cols, adjustableColumn=num_cols, parent=self.table)
+            cmds.text(label=a, width=self.col_widths.get("Attribute", 140), align="right", backgroundColor=bg)
+            for o in selected_objects:
+                self.draw_cell(o, a, bg)
+            cmds.setParent("..")
+
+    def draw_cell(self, obj, attr, bg):
+        full = f"{obj}.{attr}"
+        if not cmds.objExists(full):
+            cmds.text(label="-", width=120, align="center", backgroundColor=bg)
+            return
+        try:
+            atype = cmds.getAttr(full, type=True)
+            val = cmds.getAttr(full)
+        except Exception:
+            cmds.text(label="-", width=120, align="center", backgroundColor=bg)
+            return
+
+        if atype in ("float", "double", "doubleLinear", "doubleAngle", "short", "long"):
+            row = cmds.rowLayout(numberOfColumns=3, columnWidth3=(25, 60, 25), backgroundColor=bg)
+            cmds.button(label="-", width=25, height=20, command=lambda *_: self.adjust_attr(obj, attr, -1, row))
+            cmds.floatField(value=round(val, self.prec), precision=self.prec, width=60, backgroundColor=bg,
+                            changeCommand=lambda v, o=obj, a=attr: self.set_attr(o, a, v))
+            cmds.button(label="+", width=25, height=20, command=lambda *_: self.adjust_attr(obj, attr, 1, row))
+            cmds.setParent("..")
+        elif atype == "bool":
+            cmds.checkBox(value=val, label="", backgroundColor=bg,
+                          changeCommand=lambda v, o=obj, a=attr: self.set_attr(o, a, v))
+        elif atype == "enum":
+            enums = cmds.attributeQuery(attr, node=obj, listEnum=True) or []
+            items = enums[0].split(":") if enums else []
+            idx = int(val) if items else 0
+            opt = cmds.optionMenu(width=90, changeCommand=lambda v, o=obj, a=attr, it=items: self.set_attr(o, a, it.index(v)))
+            [cmds.menuItem(label=i) for i in items]
+            if items:
+                cmds.optionMenu(opt, edit=True, value=items[idx])
+        else:
+            cmds.textField(text=str(val), width=90, backgroundColor=bg,
+                           changeCommand=lambda v, o=obj, a=attr: self.set_attr(o, a, v))
+
+    def adjust_attr(self, obj, attr, direction, row):
+        full = f"{obj}.{attr}"
+        try:
+            val = cmds.getAttr(full)
+            new_val = val + direction * self.step
+            cmds.setAttr(full, new_val)
+            maya.utils.executeDeferred(lambda: self.refresh_field(row, new_val))
+        except Exception:
+            cmds.warning(f"Could not adjust {full}")
+
+    def refresh_field(self, row, new_val):
+        for ch in cmds.rowLayout(row, query=True, childArray=True) or []:
+            if cmds.objectTypeUI(ch) == "floatField":
+                cmds.floatField(ch, edit=True, value=round(new_val, self.prec))
+
+    def set_attr(self, obj, attr, value):
+        try:
+            cmds.setAttr(f"{obj}.{attr}", value)
+        except Exception:
+            cmds.warning(f"Could not set {obj}.{attr}")
+
+    def toggle_sort(self, col):
+        if self.sort_col == col:
+            self.sort_asc = not self.sort_asc
+        else:
+            self.sort_col = col
+            self.sort_asc = True
+        self.populate()
+
+
+# Launch it
+ss = SmartSheet()
+
+#Key instance variables:
+
+#UI settings & state
+#self.win → Name of the window.
+#self.prec → Precision for float values.
+#self.filt → Filter type (All / Transform / Visibility / Shading).
+#self.fine_mode → Whether small adjustments are enabled.
+#self.step → Step size for fine adjustments.
+#self.search → Current search text.
+
+#Columns & sorting
+#self.col_widths → Stores saved column widths.
+#self.sort_col → Column currently being sorted.
+#self.sort_asc → Sort ascending if True.
+
+#Colors/theme
+#self.theme → Stores colors for headers, rows, and accent buttons.
