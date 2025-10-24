@@ -43,7 +43,7 @@ class SmartSheet:
         self.win = cmds.window(self.win, title="Smart Sheet", widthHeight=(950, 800), sizeable=True)
         form = cmds.formLayout(parent=self.win)
 
-        # ---- toolbar ----
+        # toolbar
         toolbar = cmds.rowLayout(numberOfColumns=11, adjustableColumn=3, height=28)
         cmds.text(label="Precision:")
         self.pf = cmds.intField(value=self.prec, changeCommand=lambda *_: self.update(), width=45)
@@ -60,11 +60,11 @@ class SmartSheet:
         cmds.button(label="Redo", command=lambda *_: self._do_redo(), width=60)
         cmds.setParent(form)
 
-        # ---- scroll + table ----
+        # scroll + table
         self.scroll = cmds.scrollLayout(horizontalScrollBarThickness=14, verticalScrollBarThickness=14, childResizable=True, parent=form)
         self.table = cmds.columnLayout(adjustableColumn=True, rowSpacing=2, parent=self.scroll)
 
-        # ---- attach layouts ----
+        # attach layouts
         cmds.formLayout(form, edit=True,
             attachForm=[(toolbar, 'top', 5), (toolbar, 'left', 5), (toolbar, 'right', 5),
                         (self.scroll, 'left', 5), (self.scroll, 'right', 5), (self.scroll, 'bottom', 5)],
@@ -78,7 +78,7 @@ class SmartSheet:
         self._setup_shortcuts()
         maya.utils.executeDeferred(self.populate)
 
-    # ---------------- UI / Live Search ----------------
+    #  UI/Live Search 
     def _start_search_monitor(self):
         """Continuously monitor the search field and refresh table as you type."""
         if self._search_job:
@@ -101,7 +101,7 @@ class SmartSheet:
         self._last_search_text = cmds.textField(self.search_field, query=True, text=True)
         self._search_job = maya.utils.executeDeferred(check_search)
 
-    # ---------------- Selection monitoring ----------------
+    # monitors what's selected
     def _add_sel_job(self):
         if self._sel_job:
             try:
@@ -113,7 +113,7 @@ class SmartSheet:
             parent=self.win
         )
 
-    # ---------------- keyboard shortcuts ----------------
+    # keyboard shortcuts NOT CURRENTLY WORKING PROPERLY
     def _setup_shortcuts(self):
         """Listen for Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z in the window."""
         is_mac = sys.platform == "darwin"
@@ -139,7 +139,7 @@ class SmartSheet:
         if (modifiers & 4) and (modifiers & 1) and key == "z":
             self._do_redo()
 
-    # ---------------- undo/redo ----------------
+    # undo/redo Buttons 
     def _do_undo(self):
         try:
             cmds.undo()
@@ -154,7 +154,7 @@ class SmartSheet:
         except Exception:
             cmds.warning("Redo failed")
 
-    # ---------------- logic ----------------
+    # logic 
     def _step_label(self):
         return "Fine Adjust: ON (0.1)" if self.fine_mode else "Fine Adjust: OFF (1.0)"
 
@@ -175,7 +175,7 @@ class SmartSheet:
         cmds.optionVar(intValue=(self.prec_var, self.prec))
         self.populate()
 
-    # ---------------- populate table ----------------
+    # populates table 
     def populate(self, *_):
         for child in cmds.columnLayout(self.table, query=True, childArray=True) or []:
             cmds.deleteUI(child)
@@ -225,7 +225,7 @@ class SmartSheet:
                 self.draw_cell(o, a, bg)
             cmds.setParent("..")
 
-    # ---------------- cell drawing ----------------
+    # grid cell drawing 
     def draw_cell(self, obj, attr, bg):
         full = f"{obj}.{attr}"
         if not cmds.objExists(full):
@@ -262,7 +262,7 @@ class SmartSheet:
             cmds.textField(text=str(val), width=90, backgroundColor=bg,
                            changeCommand=lambda v, o=obj, a=attr: self.set_attr(o, a, v))
 
-    # ---------------- adjust / set attributes ----------------
+    # adjust/set attributes
     def adjust_attr(self, obj, attr, direction, row):
         full = f"{obj}.{attr}"
         try:
@@ -284,7 +284,7 @@ class SmartSheet:
         except Exception:
             cmds.warning(f"Could not set {obj}.{attr}")
 
-    # ---------------- sorting ----------------
+    # sort the attributes
     def toggle_sort(self, col):
         if self.sort_col == col:
             self.sort_asc = not self.sort_asc
@@ -296,3 +296,22 @@ class SmartSheet:
 
 # Launch the SmartSheet
 ss = SmartSheet()
+
+
+#Key instance variables:
+
+#UI settings & state
+#self.win → Name of the window.
+#self.prec → Precision for float values.
+#self.filt → Filter type (All / Transform / Visibility / Shading).
+#self.fine_mode → Whether small adjustments are enabled.
+#self.step → Step size for fine adjustments.
+#self.search → Current search text.
+
+#Columns & sorting
+#self.col_widths → Stores saved column widths.
+#self.sort_col → Column currently being sorted.
+#self.sort_asc → Sort ascending if True.
+
+#Colors/theme
+#self.theme → Stores colors for headers, rows, and accent buttons.
